@@ -1,0 +1,107 @@
+name: RDP by DucThang x TrueHieu (V7 - Chốt Hạ Tuyệt Đối)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */5 * * *"
+
+concurrency:
+  group: vps-bore-runner
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    timeout-minutes: 1440
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download and Extract Bore
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-pc-windows-msvc.zip" -OutFile bore.zip
+          Expand-Archive bore.zip -DestinationPath bore
+
+      - name: Enable RDP + Create Admin User
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          $pass = ConvertTo-SecureString "WindowsRDP2026@" -AsPlainText -Force
+          New-LocalUser "admin" -Password $pass -FullName "admin"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "admin"
+          Add-LocalGroupMember -Group "Administrators" -Member "admin"
+
+      - name: Tối ưu Registry 4K
+        run: |
+          $tsPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
+          if (!(Test-Path $tsPath)) { New-Item -Path $tsPath -Force }
+          Set-ItemProperty -Path $tsPath -Name "fEnableVirtualizedGraphics" -Value 1 -Type DWord
+          Set-ItemProperty -Path $tsPath -Name "MinFrameRate" -Value 120 -Type DWord
+
+      - name: Monitor Bore Stream & Force Update File
+        run: |
+          $PASS = "WindowsRDP2026@"
+          $USER = "admin"
+          $lastFullAddress = ""
+
+          # Cấu hình Git ép buộc
+          git config --global user.name "TrueHieu-Bot"
+          git config --global user.email "bot@trueteam.top"
+          git config --global core.autocrlf false
+
+          Write-Host "🚀 Đang truy quét Stream của Bore... Đợi Port về nhé đại ca!"
+
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = ".\bore\bore.exe"
+          $psi.Arguments = "local 3389 --to bore.pub"
+          $psi.UseShellExecute = $false
+          $psi.RedirectStandardOutput = $true
+          $process = [System.Diagnostics.Process]::Start($psi)
+
+          while (!$process.HasExited) {
+              $line = $process.StandardOutput.ReadLine()
+              if ($line) { Write-Host "[bore] $line" }
+              # Bore v0.5.1 in: "listening at bore.pub:PORT"; bản cũ: "remote forwarding at bore.pub:PORT"
+              if ($line -match "(?:listening at|remote forwarding at) (bore\.pub:\d+)") {
+                  $fullAddress = $matches[1]
+                  $portOnly = $fullAddress.Split(':')[1]
+
+                  if ($fullAddress -ne $lastFullAddress) {
+                      $lastFullAddress = $fullAddress
+                      
+                      # LOGIC GHI ĐÈ MẠNH MẼ: Xóa sạch file cũ nếu có để tránh kẹt
+                      if (Test-Path "rdp_info.txt") { Remove-Item "rdp_info.txt" -Force }
+
+                      $createdAt = (Get-Date).ToString('HH:mm:ss dd/MM/yyyy')
+                      $reportLines = @(
+                        '=======================================================',
+                        'RDP INFO - DucThang x TrueHieu Edition',
+                        '=======================================================',
+                        "FULL ADDRESS   : $fullAddress",
+                        "PORT           : $portOnly",
+                        'HOST           : bore.pub',
+                        '-------------------------------------------------------',
+                        "Username       : $USER",
+                        "Password       : $PASS",
+                        "Created        : $createdAt",
+                        '======================================================='
+                      )
+                      $report = ($reportLines -join "`r`n")
+                      [System.IO.File]::WriteAllText("$(Get-Location)\rdp_info.txt", $report)
+                      
+                      # Commit và Push bằng lệnh Force
+                      git checkout main
+                      git add rdp_info.txt
+                      git commit -m "Update RDP: $portOnly [skip ci]"
+                      git push origin main --force
+                      
+                      Write-Host "✅ ĐÃ ÉP CẬP NHẬT REPO: $fullAddress"
+                  }
+              }
+              Start-Sleep -Milliseconds 200
+          }
