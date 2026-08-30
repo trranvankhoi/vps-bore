@@ -2,8 +2,6 @@ name: RDP by DucThang x TrueHieu (V7 - Chốt Hạ Tuyệt Đối)
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 */5 * * *"
 
 concurrency:
   group: vps-bore-runner
